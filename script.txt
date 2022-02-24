@@ -1,0 +1,133 @@
+with
+    (select employer_id from headhunter.Account where Name == 'Ромашка') as employer_id_,
+    '2021' as year_,
+    (select Name from headhunter.Account where employer_id == employer_id_) as employer_name_
+
+select
+    employer_id_,
+    employer_name_,
+    spending_year as report_year,
+    sum(spending_cost)/sum(response_cnt) as sp_to_res_cost_avg,
+    count(spending_id) as spending_cnt,
+    sum(response_cnt) as response_cnt_,
+    sum(spending_cost) as total_cost
+from
+(
+select
+    spending_id,
+    toYear(spending_date) as spending_year,
+    employer_service_id,
+    vacancy_id,
+    price_to_one as spending_cost,
+    response_cnt,
+    CASE
+    WHEN response_cnt > 0 THEN price_to_one / response_cnt
+    ELSE 0
+    END as response_cost
+from
+    (
+    select
+        spending_id,
+        spending_date,
+        CASE
+        WHEN spending_end_ == '1970-01-01 00:00:00' THEN now()
+        ELSE spending_end_
+        END as spending_end,
+        employer_service_id,
+        vacancy_id,
+        price_to_one
+    from(
+        select
+        id as spending_id,
+        spending_date,
+        leadInFrame(spending_date) OVER (ORDER BY spending_date ASC ROWS
+                     BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS spending_end_,
+        employer_service_id,
+        vacancy_id
+        from
+            headhunter.Spending
+        where
+            vacancy_id in (select vacancy_id from headhunter.Vacancy where employer_id == employer_id_)
+            and
+            toYear(spending_date) == year_
+        ) as l2
+    left join
+        (
+        select
+            adjusted_cost / original_cnt as price_to_one,
+            employer_service_id
+        from
+            headhunter.Orders
+        where
+            employer_id == employer_id_
+        ) as r2
+    on l2.employer_service_id = r2.employer_service_id
+    ) as l3
+left join
+    (
+    select
+        spending_id,
+        count(ID) as response_cnt
+    from
+    (
+    select
+        *
+    from
+        (
+        select
+            spending_id,
+            spending_date,
+            CASE
+            WHEN spending_end_ == '1970-01-01 00:00:00' THEN now()
+            ELSE spending_end_
+            END as spending_end,
+            employer_service_id,
+            vacancy_id,
+            price_to_one
+        from(
+            select
+            id as spending_id,
+            spending_date,
+            leadInFrame(spending_date) OVER (ORDER BY spending_date ASC ROWS
+                         BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS spending_end_,
+            employer_service_id,
+            vacancy_id
+            from
+                headhunter.Spending
+            where
+                vacancy_id in (select vacancy_id from headhunter.Vacancy where employer_id == employer_id_)
+                and
+                toYear(spending_date) == year_
+            ) as l
+        left join
+            (
+            select
+                adjusted_cost / original_cnt as price_to_one,
+                employer_service_id
+            from
+                headhunter.Orders
+            where
+                employer_id == employer_id_
+            ) as r
+        on l.employer_service_id = r.employer_service_id
+        ) as l1
+    left join
+        (
+        select *
+        from headhunter.VacancyResponse
+        where
+            vacancy_id in (select vacancy_id from headhunter.Vacancy where employer_id == employer_id_)
+        ) as r1
+    on l1.vacancy_id = r1.vacancy_id
+    having
+        creation_date >= spending_date
+        and
+        creation_date < spending_end
+    )
+    group by
+        spending_id
+    ) as r3
+on l3.spending_id = r3.spending_id
+)
+group by
+    spending_year
